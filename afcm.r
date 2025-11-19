@@ -4,6 +4,7 @@
 # Script complet — AFCM (TDC) + AFC (Burt) + tableaux χ²
 # Affichages TERMINAL et exports en utilisant A_1..A_5, B_1..B_5, ...
 # Illustratives : Education, Sexe, Age  ×  Questions : A, B, C, D
+# Version : SANS fichiers ni calculs "résidus" et SANS export "attendus"
 # =====================================================================
 
 suppressPackageStartupMessages({
@@ -176,7 +177,6 @@ chi2_global_vs_ABCD <- function(df_cat, var_illustrative){
 export_chi2_tables_separees_exact <- function(df_cat, sortie){
   chemin <- file.path(sortie, "chi2_tables_separees.csv")
   con <- file(chemin, open="wt", encoding="UTF-8")
-  
   ecrire_bloc <- function(nom_var_illus){
     writeLines(paste0("Tableau : ", nom_var_illus, " vs A\tB\tC\tD"), con)
     writeLines("variable_question,chi2,p_value,v_cramer", con)
@@ -186,16 +186,14 @@ export_chi2_tables_separees_exact <- function(df_cat, sortie){
     utils::write.table(tab, con, sep=",", row.names=FALSE, col.names=FALSE, na="", qmethod="double")
     writeLines("", con)
   }
-  
   ecrire_bloc("Education")
   ecrire_bloc("Sexe")
   ecrire_bloc("Age")
-  
   close(con)
   invisible(chemin)
 }
 
-# ----------------- Contingence & χ² cellulaires pour ABCD × Education -----------------
+# ----------------- Contingence & contributions χ² pour ABCD × Education (SANS résidus) -----------------
 matrices_pour_var_contre_edu <- function(df_cat, varname){
   ord_edu <- levels(df_cat$Education)
   tab <- table(df_cat[[varname]], df_cat$Education)
@@ -203,12 +201,9 @@ matrices_pour_var_contre_edu <- function(df_cat, varname){
   ct  <- suppressWarnings(chisq.test(tab, correct = FALSE))
   exp <- ct$expected
   contrib <- (tab - exp)^2 / exp
-  residus <- ct$stdres
   rownames(tab)     <- paste0(varname, "_", 1:5)
-  rownames(exp)     <- paste0(varname, "_", 1:5)
   rownames(contrib) <- paste0(varname, "_", 1:5)
-  rownames(residus) <- paste0(varname, "_", 1:5)
-  list(obs = tab, att = exp, contrib = contrib, residus = residus)
+  list(obs = tab, contrib = contrib)
 }
 
 tables_ABCD_vs_edu <- function(df_cat){
@@ -217,46 +212,40 @@ tables_ABCD_vs_edu <- function(df_cat){
   Cx <- matrices_pour_var_contre_edu(df_cat, "C")
   Dx <- matrices_pour_var_contre_edu(df_cat, "D")
   obs  <- rbind(Ax$obs,  Bx$obs,  Cx$obs,  Dx$obs)
-  att  <- rbind(Ax$att,  Bx$att,  Cx$att,  Dx$att)
   cont <- rbind(Ax$contrib, Bx$contrib, Cx$contrib, Dx$contrib)
-  res  <- rbind(Ax$residus, Bx$residus, Cx$residus, Dx$residus)
-  list(obs=obs, att=att, contrib=cont, residus=res)
+  list(obs=obs, contrib=cont)
 }
 
 export_tables_cellulaires <- function(df_cat, sortie){
   T <- tables_ABCD_vs_edu(df_cat)
-  write.csv(as.data.frame.matrix(T$obs),      file.path(sortie, "contingence_ABCD_par_edu.csv"), row.names = TRUE)
-  write.csv(as.data.frame.matrix(T$att),      file.path(sortie, "attendus_ABCD_par_edu.csv"),    row.names = TRUE)
-  write.csv(as.data.frame.matrix(T$contrib),  file.path(sortie, "contrib_chi2_ABCD_par_edu.csv"),row.names = TRUE)
-  write.csv(as.data.frame.matrix(T$residus),  file.path(sortie, "residus_std_ABCD_par_edu.csv"), row.names = TRUE)
-  logf("Tables écrites : contingence_*.csv, attendus_*.csv, contrib_chi2_*.csv, residus_std_*.csv")
+  write.csv(as.data.frame.matrix(T$obs),
+            file.path(sortie, "contingence_ABCD_par_edu.csv"),
+            row.names = TRUE)
+  write.csv(as.data.frame.matrix(T$contrib),
+            file.path(sortie, "contrib_chi2_ABCD_par_edu.csv"),
+            row.names = TRUE)
+  logf("Tables écrites : contingence_*.csv, contrib_chi2_*.csv (pas d'attendus, pas de résidus).")
 }
 
 # ----------------- Tableaux “colonnes” (ChiDist/Inertia/Dim1/Dim2 + Chi2_col/p_value) -----------------
 resume_colonnes_CA <- function(df_cat, rows_var, cols_var, ncp = 2){
   xt <- table(df_cat[[rows_var]], df_cat[[cols_var]], dnn = c(rows_var, cols_var))
   ca <- FactoMineR::CA(as.matrix(xt), ncp = ncp, graph = FALSE)
-  
   n_axes_dispo <- ncol(ca$col$coord)
   ncp_eff <- min(ncp, max(1, n_axes_dispo))
-  
   masses_c  <- as.numeric(ca$col$mass)
   coords    <- ca$col$coord[, 1:ncp_eff, drop = FALSE]
   chi_dist  <- sqrt(rowSums(coords^2))
   inertia   <- masses_c * (chi_dist^2)
-  
   R <- nrow(xt)
   prof_lignes <- rowSums(xt) / sum(xt)
   col_tot     <- colSums(xt)
   exp_cols    <- outer(prof_lignes, col_tot)
-  
   chi2_col <- colSums((xt - exp_cols)^2 / exp_cols)
   p_col    <- pchisq(chi2_col, df = R - 1, lower.tail = FALSE)
-  
   dim1 <- coords[, 1]
   dim2 <- if (ncp_eff >= 2) coords[, 2] else rep(NA_real_, length(dim1))
   noms_cols <- colnames(xt)
-  
   out <- rbind(
     ChiDist   = round(chi_dist, 6),
     Inertia   = round(inertia, 6),
@@ -296,10 +285,8 @@ imprimer_test <- function(nom_lignes, nom_colonnes, tableau, test){
 }
 
 export_tables_et_tests_terminal <- function(dfr, sortie){
-  # Lignes déjà codées en A_1.., B_1.., ... on garde telles quelles
   illustratives <- list(Education = dfr$Education, Sexe = dfr$Sexe, Age = dfr$Age)
   questions     <- list(A = dfr$A, B = dfr$B, C = dfr$C, D = dfr$D)
-  
   recap <- data.frame(
     illustrative = character(),
     question     = character(),
@@ -308,12 +295,11 @@ export_tables_et_tests_terminal <- function(dfr, sortie){
     p_value      = numeric(),
     stringsAsFactors = FALSE
   )
-  
   for (iv_name in names(illustratives)){
     iv <- illustratives[[iv_name]]
     for (q_name in names(questions)){
       qv <- questions[[q_name]]
-      tab <- table(qv, iv)  # lignes = A_1..A_5 (ou B_1..B_5, etc.), colonnes = modalités de l'illustrative
+      tab <- table(qv, iv)
       test <- suppressWarnings(chisq.test(tab, correct = FALSE))
       imprimer_test(q_name, iv_name, tab, test)
       write.csv(as.data.frame.matrix(tab),
@@ -348,7 +334,7 @@ main <- function(){
   write.csv(dfr, file.path(sortie, "donnees_recodées.csv"), row.names = FALSE)
   logf("Recodage terminé.")
   
-  # Tables cellule-par-cellule (ABCD × Éducation) avec libellés A_1.., B_1..
+  # Tables cellule-par-cellule (ABCD × Éducation) — SANS attendus, SANS résidus
   export_tables_cellulaires(dfr, sortie)
   
   # Trois tableaux χ² globaux empilés (Education/Sexe/Age vs A,B,C,D)
@@ -415,15 +401,8 @@ main <- function(){
   sauver_png(p_burt, file.path(sortie, "modalites_Burt_axes12_tout.png"))
   logf(sprintf("AFC (Burt) — Axe1/Axe2 : %.1f%% / %.1f%%", caB$eig[1,2], caB$eig[2,2]))
   
-  logf("Terminé. Les tableaux affichés utilisent le réencodage : A_1.., B_1.., C_1.., D_1..")
+  logf("Terminé")
 }
 
 # Exécution
 main()
-
-
-
-
-
-
-
